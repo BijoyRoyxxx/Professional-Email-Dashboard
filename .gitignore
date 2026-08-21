@@ -1,0 +1,10 @@
+# Python & Environment
+.env
+venv/
+__pycache__/
+
+# Database
+campaigns.db
+
+# Misc
+.DS_Store
