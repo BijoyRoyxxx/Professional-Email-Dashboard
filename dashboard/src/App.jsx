@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css'; 
 
+// The base URL for your live Render backend
+const API_BASE_URL = 'https://professional-email-dashboard.onrender.com';
+
 export default function App() {
   const [mode, setMode] = useState('single');
   const [toEmail, setToEmail] = useState('');
@@ -47,7 +50,8 @@ export default function App() {
 
   const fetchLogs = async () => {
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/logs');
+      // 1. Logs Fetch
+      const res = await fetch(`${API_BASE_URL}/api/logs`);
       if (res.ok) setLogs(await res.json());
     } catch (error) { console.error("Could not fetch logs."); }
   };
@@ -58,7 +62,8 @@ export default function App() {
 
     if (mode === 'single') {
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/send', {
+        // 2. Single Send Fetch
+        const response = await fetch(`${API_BASE_URL}/api/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ to_email: toEmail, cc_email: ccEmail, subject: subject || '(No Subject)', message: msg })
@@ -80,7 +85,8 @@ export default function App() {
       formData.append('message', msg); 
 
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/bulk-send', {
+        // 3. Bulk Send Fetch
+        const response = await fetch(`${API_BASE_URL}/api/bulk-send`, {
           method: 'POST',
           body: formData 
         });
@@ -100,7 +106,9 @@ export default function App() {
     try {
       const plainText = msg.replace(/<[^>]*>?/gm, ''); 
       const enhancedPrompt = `Write this using a ${aiTone} tone: ${plainText}`;
-      const res = await fetch('http://127.0.0.1:8000/api/ai/draft', {
+      
+      // 4. AI Draft Fetch
+      const res = await fetch(`${API_BASE_URL}/api/ai/draft`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text_content: enhancedPrompt }) 
@@ -118,7 +126,9 @@ export default function App() {
     setIsDraftingSubject(true);
     try {
       const plainText = msg.replace(/<[^>]*>?/gm, ''); 
-      const res = await fetch('http://127.0.0.1:8000/api/ai/subject', {
+      
+      // 5. AI Subject Fetch
+      const res = await fetch(`${API_BASE_URL}/api/ai/subject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text_content: plainText }) 
