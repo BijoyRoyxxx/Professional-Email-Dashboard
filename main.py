@@ -17,7 +17,11 @@ app = FastAPI()
 # Allow React to communicate with this API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174"],
+    allow_origins=[
+        "http://localhost:5173", 
+        "http://localhost:5174",
+        "https://professional-email-dashboard.vercel.app" # <-- Your live Vercel site!
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
