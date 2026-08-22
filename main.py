@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime
 from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime
 from groq import Groq
+from passlib.context import CryptContext
 
 # System Architect: Bijoy Roy
 # Load environment variables (.env file)
@@ -21,17 +22,19 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173", 
         "http://localhost:5174",
-        "https://professional-email-dashboard.vercel.app" # <-- Your live Vercel site!
+        "https://professional-email-dashboard.vercel.app" # <-- Your live Vercel site
     ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- 1. DATABASE SETUP ---
+# --- 1. DATABASE & SECURITY SETUP ---
 SQLALCHEMY_DATABASE_URL = "sqlite:///./campaigns.db"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class EmailLog(Base):
     __tablename__ = "email_logs"
@@ -40,6 +43,12 @@ class EmailLog(Base):
     subject = Column(String)
     status = Column(String)
     timestamp = Column(DateTime, default=datetime.now)
+
+class Admin(Base):
+    __tablename__ = "admins"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    password_hash = Column(String)
 
 Base.metadata.create_all(bind=engine)
 
@@ -50,7 +59,23 @@ def get_db():
     finally:
         db.close()
 
+# Auto-Create Default Admin (Only runs if the database is empty)
+def create_default_admin():
+    db = SessionLocal()
+    if not db.query(Admin).first():
+        hashed_pw = pwd_context.hash("system_admin_2026")
+        new_admin = Admin(username="bijoy", password_hash=hashed_pw)
+        db.add(new_admin)
+        db.commit()
+    db.close()
+
+create_default_admin()
+
 # --- 2. DATA MODELS ---
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
 class EmailRequest(BaseModel):
     to_email: str
     cc_email: str = ""
@@ -60,7 +85,7 @@ class EmailRequest(BaseModel):
 class AIDraftRequest(BaseModel):
     text_content: str
 
-# --- 3. THE GOOGLE API BRIDGE (Bypassing Render Firewall) ---
+# --- 3. THE GOOGLE API BRIDGE (Firewall Bypass) ---
 GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyDlI2n4MgsyEIQTa5TfVgBDcUgM0DXF6VaPOizJrxOfd2wJuc7QNxy4fQp3HXyyen_/exec"
 
 def send_email_via_google(to_email, cc_email, subject, message):
@@ -84,6 +109,15 @@ def send_email_via_google(to_email, cc_email, subject, message):
         return False
 
 # --- 4. ENDPOINTS ---
+@app.post("/api/login")
+def login(req: LoginRequest, db = Depends(get_db)):
+    admin = db.query(Admin).filter(Admin.username == req.username).first()
+    
+    if not admin or not pwd_context.verify(req.password, admin.password_hash):
+        return {"success": False, "error": "Unauthorized access detected."}
+        
+    return {"success": True, "message": "Access Granted"}
+
 @app.post("/api/send")
 def send_single_email(request: EmailRequest, db = Depends(get_db)):
     success = send_email_via_google(request.to_email, request.cc_email, request.subject, request.message)
@@ -125,21 +159,12 @@ def get_logs(db = Depends(get_db)):
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 def execute_groq_request(messages, max_tokens):
-    """
-    Fetches all active models, filters out gated/audio models, 
-    and tries them one by one until a successful generation occurs.
-    """
-    # 1. Fetch live active models from Groq
     models_data = client.models.list().data
-    
-    # 2. Filter out audio models and gated/private models that require terms acceptance
     active_ids = [m.id for m in models_data if "whisper" not in m.id.lower() and "canopylabs" not in m.id.lower()]
     
-    # 3. Create a priority queue (try the best, most reliable models first)
     preferred = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-8b-8192", "mixtral-8x7b-32768", "gemma2-9b-it"]
     ordered_models = [m for m in preferred if m in active_ids] + [m for m in active_ids if m not in preferred]
     
-    # 4. Loop through models until one successfully works!
     for model_id in ordered_models:
         try:
             print(f"Attempting AI generation with engine: {model_id}...")
