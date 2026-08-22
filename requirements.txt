@@ -1,7 +1,9 @@
 fastapi
 uvicorn
 pydantic
-groq
-python-dotenv
 sqlalchemy
+python-dotenv
 python-multipart
+groq
+passlib
+bcrypt

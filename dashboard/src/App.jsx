@@ -2,10 +2,17 @@ import { useState, useEffect, useRef } from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css'; 
 
-// The base URL for your live Render backend
 const API_BASE_URL = 'https://professional-email-dashboard.onrender.com';
 
 export default function App() {
+  // Auth State
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authUsername, setAuthUsername] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // App State
   const [mode, setMode] = useState('single');
   const [toEmail, setToEmail] = useState('');
   const [ccEmail, setCcEmail] = useState('');
@@ -26,7 +33,14 @@ export default function App() {
   const [newContactName, setNewContactName] = useState('');
   const [newContactEmail, setNewContactEmail] = useState('');
 
-  // AUTO-SAVE & CRM LOAD LOGIC
+  // Check if logged in on load
+  useEffect(() => {
+    if (localStorage.getItem('isAuth') === 'true') {
+      setIsAuthenticated(true);
+    }
+  }, []);
+
+  // AUTO-SAVE & LOAD
   useEffect(() => {
     const savedMsg = localStorage.getItem('draftMsg');
     const savedSub = localStorage.getItem('draftSub');
@@ -36,8 +50,8 @@ export default function App() {
     if (savedSub) setSubject(savedSub);
     if (savedContacts) setContacts(JSON.parse(savedContacts));
     
-    fetchLogs();
-  }, []);
+    if (isAuthenticated) fetchLogs();
+  }, [isAuthenticated]);
 
   useEffect(() => {
     localStorage.setItem('draftMsg', msg);
@@ -48,9 +62,33 @@ export default function App() {
     localStorage.setItem('crmContacts', JSON.stringify(contacts));
   }, [contacts]);
 
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setIsLoggingIn(true);
+    setAuthError('');
+    
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: authUsername, password: authPassword })
+      });
+      
+      const data = await res.json();
+      if (data.success) {
+        setIsAuthenticated(true);
+        localStorage.setItem('isAuth', 'true');
+      } else {
+        setAuthError(data.error);
+      }
+    } catch (error) {
+      setAuthError("Server communication failed.");
+    }
+    setIsLoggingIn(false);
+  };
+
   const fetchLogs = async () => {
     try {
-      // 1. Logs Fetch
       const res = await fetch(`${API_BASE_URL}/api/logs`);
       if (res.ok) setLogs(await res.json());
     } catch (error) { console.error("Could not fetch logs."); }
@@ -62,7 +100,6 @@ export default function App() {
 
     if (mode === 'single') {
       try {
-        // 2. Single Send Fetch
         const response = await fetch(`${API_BASE_URL}/api/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -85,7 +122,6 @@ export default function App() {
       formData.append('message', msg); 
 
       try {
-        // 3. Bulk Send Fetch
         const response = await fetch(`${API_BASE_URL}/api/bulk-send`, {
           method: 'POST',
           body: formData 
@@ -107,7 +143,6 @@ export default function App() {
       const plainText = msg.replace(/<[^>]*>?/gm, ''); 
       const enhancedPrompt = `Write this using a ${aiTone} tone: ${plainText}`;
       
-      // 4. AI Draft Fetch
       const res = await fetch(`${API_BASE_URL}/api/ai/draft`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -127,7 +162,6 @@ export default function App() {
     try {
       const plainText = msg.replace(/<[^>]*>?/gm, ''); 
       
-      // 5. AI Subject Fetch
       const res = await fetch(`${API_BASE_URL}/api/ai/subject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -141,7 +175,6 @@ export default function App() {
     finally { setIsDraftingSubject(false); }
   };
 
-  // CRM Helper Functions
   const addContact = () => {
     if (!newContactName || !newContactEmail) return;
     setContacts([...contacts, { name: newContactName, email: newContactEmail }]);
@@ -160,99 +193,74 @@ export default function App() {
   const successfulSends = logs.filter(l => l.status.includes('Success')).length;
   const successRate = totalSent === 0 ? 0 : Math.round((successfulSends / totalSent) * 100);
 
+  // --- LOGIN SCREEN RENDER ---
+  if (!isAuthenticated) {
+    return (
+      <div className="app-container" style={{ justifyContent: 'center', alignItems: 'center' }}>
+        <style>{`
+          * { box-sizing: border-box; }
+          .app-container { min-height: 100vh; background: #050505; padding: 30px 20px 10px 20px; font-family: 'Inter', system-ui, sans-serif; position: relative; overflow-x: hidden; z-index: 1; display: flex; flex-direction: column; }
+          .ambient-orb { position: absolute; border-radius: 50%; filter: blur(90px); z-index: -1; animation: float 12s infinite ease-in-out alternate; }
+          .orb-1 { width: 40vw; height: 40vw; background: rgba(59, 130, 246, 0.25); top: -10%; left: 5%; }
+          .orb-2 { width: 50vw; height: 50vw; background: rgba(168, 85, 247, 0.2); bottom: -10%; right: -5%; animation-delay: -6s; }
+          @keyframes float { 0% { transform: translateY(0px) scale(1); } 100% { transform: translateY(40px) scale(1.1); } }
+          .glass-panel { background: rgba(20, 20, 25, 0.5); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border-radius: 20px; border-top: 1px solid rgba(255, 255, 255, 0.15); border-left: 1px solid rgba(255, 255, 255, 0.1); border-right: 1px solid rgba(255, 255, 255, 0.05); border-bottom: 1px solid rgba(255, 255, 255, 0.05); box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.05); overflow: hidden; }
+          .input-3d { flex: 1; background: rgba(0, 0, 0, 0.3); border: none; outline: none; font-size: 14px; color: #e2e8f0; padding: 12px 14px; border-radius: 10px; box-shadow: inset 0 3px 6px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.08); transition: all 0.2s; width: 100%; }
+          .input-3d:focus { background: rgba(0, 0, 0, 0.5); box-shadow: inset 0 3px 6px rgba(0,0,0,0.8), 0 0 0 2px rgba(59, 130, 246, 0.5); }
+          .btn-ai { padding: 12px 24px; border: none; border-radius: 30px; font-weight: 700; font-size: 14px; cursor: pointer; transition: all 0.15s ease; transform: translateY(-4px); white-space: nowrap; color: #fff; background: linear-gradient(135deg, #3b82f6 0%, #a855f7 100%); box-shadow: 0 6px 0 #2563eb, 0 15px 30px rgba(59, 130, 246, 0.4); }
+          .btn-ai:active { transform: translateY(2px); box-shadow: 0 0 0 #2563eb, 0 5px 15px rgba(59, 130, 246, 0.4); }
+        `}</style>
+        
+        <div className="ambient-orb orb-1"></div>
+        <div className="ambient-orb orb-2"></div>
+        
+        <div className="glass-panel" style={{ padding: '40px', width: '100%', maxWidth: '380px', textAlign: 'center', zIndex: 10 }}>
+          <div style={{ fontSize: '40px', marginBottom: '10px' }}>🔐</div>
+          <h2 style={{ color: '#fff', margin: '0 0 24px 0', fontSize: '20px', letterSpacing: '1px' }}>SYSTEM ACCESS</h2>
+          
+          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <input type="text" placeholder="Admin Username" className="input-3d" value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} required />
+            <input type="password" placeholder="Encryption Key" className="input-3d" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required />
+            {authError && <div style={{ color: '#ef4444', fontSize: '12px', fontWeight: 'bold' }}>{authError}</div>}
+            <button type="submit" disabled={isLoggingIn} className="btn-ai" style={{ marginTop: '10px' }}>
+              {isLoggingIn ? 'Decrypting...' : 'INITIALIZE'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // --- DASHBOARD RENDER ---
   return (
     <div className="app-container">
       <style>{`
         * { box-sizing: border-box; }
-        
-        .app-container {
-          min-height: 100vh;
-          background: #050505;
-          padding: 30px 20px 10px 20px;
-          font-family: 'Inter', system-ui, sans-serif;
-          position: relative;
-          overflow-x: hidden;
-          z-index: 1;
-          display: flex;
-          flex-direction: column;
-        }
-        
-        .dashboard-grid {
-          display: grid;
-          grid-template-columns: minmax(200px, 260px) minmax(400px, 1fr) minmax(200px, 260px);
-          gap: 20px;
-          max-width: 1400px;
-          width: 100%;
-          margin: 0 auto;
-          position: relative;
-          z-index: 10;
-          flex: 1;
-        }
-
-        @media (max-width: 1050px) {
-          .dashboard-grid { grid-template-columns: 1fr; max-width: 800px; }
-          .side-panel { display: none !important; }
-        }
-
-        .ambient-orb {
-          position: absolute; border-radius: 50%; filter: blur(90px); z-index: -1;
-          animation: float 12s infinite ease-in-out alternate;
-        }
+        .app-container { min-height: 100vh; background: #050505; padding: 30px 20px 10px 20px; font-family: 'Inter', system-ui, sans-serif; position: relative; overflow-x: hidden; z-index: 1; display: flex; flex-direction: column; }
+        .dashboard-grid { display: grid; grid-template-columns: minmax(200px, 260px) minmax(400px, 1fr) minmax(200px, 260px); gap: 20px; max-width: 1400px; width: 100%; margin: 0 auto; position: relative; z-index: 10; flex: 1; }
+        @media (max-width: 1050px) { .dashboard-grid { grid-template-columns: 1fr; max-width: 800px; } .side-panel { display: none !important; } }
+        .ambient-orb { position: absolute; border-radius: 50%; filter: blur(90px); z-index: -1; animation: float 12s infinite ease-in-out alternate; }
         .orb-1 { width: 40vw; height: 40vw; background: rgba(59, 130, 246, 0.25); top: -10%; left: 5%; }
         .orb-2 { width: 50vw; height: 50vw; background: rgba(168, 85, 247, 0.2); bottom: -10%; right: -5%; animation-delay: -6s; }
         .orb-3 { width: 30vw; height: 30vw; background: rgba(16, 185, 129, 0.15); top: 30%; left: 35%; animation-delay: -3s; }
-
-        @keyframes float {
-          0% { transform: translateY(0px) scale(1); }
-          100% { transform: translateY(40px) scale(1.1); }
-        }
-
-        .glass-panel {
-          background: rgba(20, 20, 25, 0.5);
-          backdrop-filter: blur(24px) saturate(180%);
-          -webkit-backdrop-filter: blur(24px) saturate(180%);
-          border-radius: 20px;
-          border-top: 1px solid rgba(255, 255, 255, 0.15);
-          border-left: 1px solid rgba(255, 255, 255, 0.1);
-          border-right: 1px solid rgba(255, 255, 255, 0.05);
-          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-          box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-          overflow: hidden;
-        }
-
-        .input-3d {
-          flex: 1; background: rgba(0, 0, 0, 0.3); border: none; outline: none;
-          font-size: 14px; color: #e2e8f0; padding: 12px 14px; border-radius: 10px;
-          box-shadow: inset 0 3px 6px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.08);
-          transition: all 0.2s; width: 100%;
-        }
+        @keyframes float { 0% { transform: translateY(0px) scale(1); } 100% { transform: translateY(40px) scale(1.1); } }
+        .glass-panel { background: rgba(20, 20, 25, 0.5); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border-radius: 20px; border-top: 1px solid rgba(255, 255, 255, 0.15); border-left: 1px solid rgba(255, 255, 255, 0.1); border-right: 1px solid rgba(255, 255, 255, 0.05); border-bottom: 1px solid rgba(255, 255, 255, 0.05); box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.05); overflow: hidden; }
+        .input-3d { flex: 1; background: rgba(0, 0, 0, 0.3); border: none; outline: none; font-size: 14px; color: #e2e8f0; padding: 12px 14px; border-radius: 10px; box-shadow: inset 0 3px 6px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.08); transition: all 0.2s; width: 100%; }
         .input-3d:focus { background: rgba(0, 0, 0, 0.5); box-shadow: inset 0 3px 6px rgba(0,0,0,0.8), 0 0 0 2px rgba(59, 130, 246, 0.5); }
-        
-        .btn-3d, .btn-ai {
-          padding: 12px 24px; border: none; border-radius: 30px; font-weight: 700; font-size: 14px;
-          cursor: pointer; transition: all 0.15s ease; transform: translateY(-4px); white-space: nowrap;
-        }
+        .btn-3d, .btn-ai { padding: 12px 24px; border: none; border-radius: 30px; font-weight: 700; font-size: 14px; cursor: pointer; transition: all 0.15s ease; transform: translateY(-4px); white-space: nowrap; }
         .btn-3d { color: #0f172a; background: #f8fafc; box-shadow: 0 6px 0 #94a3b8, 0 15px 25px rgba(0,0,0,0.4); }
         .btn-3d:active { transform: translateY(2px); box-shadow: 0 0 0 #94a3b8, 0 5px 10px rgba(0,0,0,0.4); }
         .btn-3d:disabled { opacity: 0.7; cursor: not-allowed; }
-
         .btn-ai { color: #fff; background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); box-shadow: 0 6px 0 #7e22ce, 0 15px 30px rgba(236, 72, 153, 0.4); }
         .btn-ai:active { transform: translateY(2px); box-shadow: 0 0 0 #7e22ce, 0 5px 15px rgba(236, 72, 153, 0.4); }
-
         .side-panel { display: flex; flex-direction: column; gap: 20px; height: fit-content; }
         .side-module { background: rgba(0,0,0,0.2); border-radius: 16px; padding: 18px; box-shadow: inset 0 2px 5px rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.03); }
         .module-title { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 14px; display: flex; alignItems: center; gap: 8px;}
-        
         .template-btn { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); color: #cbd5e1; padding: 10px 12px; border-radius: 10px; font-size: 12px; text-align: left; cursor: pointer; transition: all 0.2s; margin-bottom: 8px; width: 100%; font-weight: 500; }
         .template-btn:hover { background: rgba(255,255,255,0.08); transform: translateX(4px); border-color: rgba(255,255,255,0.15); }
-
         .tone-btn { flex: 1; padding: 10px 0; text-align: center; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid transparent; transition: all 0.2s; }
         .tone-active { background: rgba(59, 130, 246, 0.2); border-color: rgba(59, 130, 246, 0.5); color: #60a5fa; box-shadow: 0 0 15px rgba(59, 130, 246, 0.2); }
         .tone-inactive { background: rgba(0,0,0,0.4); color: #64748b; border-color: rgba(255,255,255,0.05); }
-
-        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 10px #10b981; display: inline-block; }
-
-        /* Custom Dark Mode for React-Quill */
         .quill { background: rgba(0, 0, 0, 0.3); border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); overflow: hidden; }
         .ql-toolbar { background: rgba(0, 0, 0, 0.5) !important; border: none !important; border-bottom: 1px solid rgba(255,255,255,0.08) !important; }
         .ql-container { border: none !important; color: #e2e8f0 !important; font-size: 14px !important; min-height: 240px; }
@@ -260,23 +268,8 @@ export default function App() {
         .ql-stroke { stroke: #94a3b8 !important; }
         .ql-fill { fill: #94a3b8 !important; }
         .ql-picker-label, .ql-picker-item { color: #94a3b8 !important; }
-
-        /* THE NEW WATERMARK CSS */
-        .watermark {
-          text-align: center;
-          margin-top: 40px;
-          padding-bottom: 10px;
-          font-size: 11px;
-          color: rgba(148, 163, 184, 0.4);
-          letter-spacing: 3px;
-          text-transform: uppercase;
-          font-weight: 700;
-          position: relative;
-          z-index: 10;
-        }
-        .watermark span {
-          color: rgba(59, 130, 246, 0.6);
-        }
+        .watermark { text-align: center; margin-top: 40px; padding-bottom: 10px; font-size: 11px; color: rgba(148, 163, 184, 0.4); letter-spacing: 3px; text-transform: uppercase; font-weight: 700; position: relative; z-index: 10; }
+        .watermark span { color: rgba(59, 130, 246, 0.6); }
       `}</style>
 
       <div className="ambient-orb orb-1"></div>
@@ -285,9 +278,8 @@ export default function App() {
 
       <div className="dashboard-grid">
         
-        {/* ================= LEFT PANEL ================= */}
+        {/* LEFT PANEL */}
         <div className="side-panel">
-          
           <div className="glass-panel side-module">
             <div className="module-title">📒 Client CRM</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
@@ -297,7 +289,6 @@ export default function App() {
                 + Save Contact
               </button>
             </div>
-            
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto', paddingRight: '4px' }}>
               {contacts.map((c, i) => (
                 <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)', transition: 'background 0.2s' }}>
@@ -321,7 +312,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* ================= CENTER PANEL ================= */}
+        {/* CENTER PANEL */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           <div className="glass-panel">
             <div style={{ background: 'rgba(0, 0, 0, 0.2)', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -401,7 +392,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* ================= RIGHT PANEL ================= */}
+        {/* RIGHT PANEL */}
         <div className="side-panel">
           <div className="glass-panel side-module">
             <div className="module-title">🧠 AI Persona Settings</div>
@@ -435,11 +426,10 @@ export default function App() {
         </div>
       </div>
 
-      {/* ================= WATERMARK ================= */}
+      {/* WATERMARK */}
       <div className="watermark">
         System Architect: <span>Bijoy Roy</span>
       </div>
-
     </div>
   );
 }
