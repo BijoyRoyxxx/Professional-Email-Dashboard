@@ -121,63 +121,39 @@ def send_bulk_emails(file: UploadFile = File(...), subject: str = Form(...), mes
 def get_logs(db = Depends(get_db)):
     return db.query(EmailLog).order_by(EmailLog.timestamp.desc()).all()
 
-# --- 5. AI INTEGRATION (Auto-Updating Models) ---
+# --- 5. AI INTEGRATION (Ultimate Auto-Failover Loop) ---
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 def execute_groq_request(messages, max_tokens):
     """
-    Robust Groq API executor. Tries a primary model. If decommissioned,
-    automatically queries Groq's active models list and fails over to the latest.
+    Fetches all active models, filters out gated/audio models, 
+    and tries them one by one until a successful generation occurs.
     """
-    primary_model = "llama-3.1-8b-instant"
+    # 1. Fetch live active models from Groq
+    models_data = client.models.list().data
     
-    try:
-        # Attempt to use the primary model
-        return client.chat.completions.create(
-            model=primary_model,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=max_tokens,
-        )
-    except Exception as e:
-        print(f"Primary AI model '{primary_model}' failed. Dynamic failover triggered...")
-        
-        # 1. Fetch the live list of currently active models from Groq
-        models_data = client.models.list().data
-        active_ids = [m.id for m in models_data]
-        
-        fallback_model = None
-        
-        # 2. Priority list: Find the best, newest model still standing
-        fallback_preferences = [
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "llama-3.2-3b-preview",
-            "mixtral-8x7b-32768",
-            "gemma2-9b-it"
-        ]
-        
-        for pref in fallback_preferences:
-            if pref in active_ids:
-                fallback_model = pref
-                break
-                
-        # 3. Ultimate fail-safe: if all preferred models are gone, grab ANY active text model
-        if not fallback_model:
-            for m in active_ids:
-                if "whisper" not in m.lower():  # Ignore audio models
-                    fallback_model = m
-                    break
-        
-        print(f"Successfully switched to fallback AI engine: {fallback_model}")
-        
-        # Re-execute the request with the active fallback model
-        return client.chat.completions.create(
-            model=fallback_model,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=max_tokens,
-        )
+    # 2. Filter out audio models and gated/private models that require terms acceptance
+    active_ids = [m.id for m in models_data if "whisper" not in m.id.lower() and "canopylabs" not in m.id.lower()]
+    
+    # 3. Create a priority queue (try the best, most reliable models first)
+    preferred = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-8b-8192", "mixtral-8x7b-32768", "gemma2-9b-it"]
+    ordered_models = [m for m in preferred if m in active_ids] + [m for m in active_ids if m not in preferred]
+    
+    # 4. Loop through models until one successfully works!
+    for model_id in ordered_models:
+        try:
+            print(f"Attempting AI generation with engine: {model_id}...")
+            return client.chat.completions.create(
+                model=model_id,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=max_tokens,
+            )
+        except Exception as e:
+            print(f"Engine {model_id} failed. Skipping to next available model... (Error: {e})")
+            continue
+            
+    raise Exception("Critical Error: All available Groq AI engines failed to respond.")
 
 @app.post("/api/ai/draft")
 def generate_draft(req: AIDraftRequest):
