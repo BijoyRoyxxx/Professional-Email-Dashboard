@@ -1,8 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import smtplib, os, csv, codecs
-from email.message import EmailMessage
+import os, csv, codecs, json
+import urllib.request
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, Column, Integer, String, DateTime
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -49,135 +49,103 @@ def get_db():
     finally:
         db.close()
 
-
-# --- 2. CORE EMAIL LOGIC (UPGRADED FOR HTML) ---
-def send_single_email(to_email: str, message_body: str, subject: str, cc_email: str = ""):
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = os.getenv("EMAIL")
-    msg['To'] = to_email
-    if cc_email:
-        msg['Cc'] = cc_email
-        
-    msg.set_content(message_body, subtype='html')
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(os.getenv("EMAIL"), os.getenv("PASS"))
-        server.send_message(msg)
-
-
-# --- 3. API ENDPOINTS ---
+# --- 2. DATA MODELS ---
 class EmailRequest(BaseModel):
     to_email: str
     cc_email: str = ""
     subject: str
     message: str
 
-@app.post("/api/send")
-def send_email(req: EmailRequest, db = Depends(get_db)):
-    try:
-        send_single_email(req.to_email, req.message, req.subject, req.cc_email)
-        log = EmailLog(recipient=req.to_email, subject=req.subject, status="Success")
-    except Exception as e:
-        log = EmailLog(recipient=req.to_email, subject=req.subject, status=f"Failed: {str(e)}")
+class AIDraftRequest(BaseModel):
+    text_content: str
+
+# --- 3. THE GOOGLE API BRIDGE (Bypassing Render Firewall) ---
+GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyDlI2n4MgsyEIQTa5TfVgBDcUgM0DXF6VaPOizJrxOfd2wJuc7QNxy4fQp3HXyyen_/exec"
+
+def send_email_via_google(to_email, cc_email, subject, message):
+    data = {
+        "to": to_email,
+        "cc": cc_email,
+        "subject": subject,
+        "message": message
+    }
     
-    db.add(log)
+    # Send a POST request to your Google Apps Script
+    req = urllib.request.Request(GOOGLE_SCRIPT_URL, method="POST")
+    req.add_header('Content-Type', 'application/json')
+    data_bytes = json.dumps(data).encode('utf-8')
+    
+    try:
+        response = urllib.request.urlopen(req, data=data_bytes)
+        result = json.loads(response.read().decode('utf-8'))
+        return result.get("status") == "Success"
+    except Exception as e:
+        print("API Error:", e)
+        return False
+
+# --- 4. ENDPOINTS ---
+@app.post("/api/send")
+def send_single_email(request: EmailRequest, db = Depends(get_db)):
+    success = send_email_via_google(request.to_email, request.cc_email, request.subject, request.message)
+    
+    status = "Success" if success else "Failed: API Error"
+    db_log = EmailLog(recipient=request.to_email, subject=request.subject, status=status)
+    db.add(db_log)
     db.commit()
-    return {"status": "Complete"}
+    
+    if success:
+        return {"message": "Email sent successfully!"}
+    return {"error": "Failed to send email"}
 
 @app.post("/api/bulk-send")
-async def bulk_send(
-    file: UploadFile = File(...), 
-    subject: str = Form(...),
-    message: str = Form(...),
-    db = Depends(get_db)
-):
+def send_bulk_emails(file: UploadFile = File(...), subject: str = Form(...), message: str = Form(...), db = Depends(get_db)):
     csvReader = csv.DictReader(codecs.iterdecode(file.file, 'utf-8'))
-    success_count = 0
     
     for row in csvReader:
-        recipient = row.get('Email')
-        if not recipient:
-            continue
-            
-        custom_message = message
-        custom_subject = subject
+        personalized_msg = message
         for key, value in row.items():
-            if key and value:
-                custom_message = custom_message.replace(f"{{{key}}}", value)
-                custom_subject = custom_subject.replace(f"{{{key}}}", value)
-        
-        try:
-            send_single_email(recipient, custom_message, custom_subject)
-            log = EmailLog(recipient=recipient, subject=custom_subject, status="Success")
-            success_count += 1
-        except Exception as e:
-            log = EmailLog(recipient=recipient, subject=custom_subject, status="Failed")
+            personalized_msg = personalized_msg.replace(f"{{{key}}}", value)
             
-        db.add(log)
-        
+        recipient = row.get("Email") or row.get("email")
+        if recipient:
+            success = send_email_via_google(recipient, "", subject, personalized_msg)
+            status = "Success" if success else "Failed: API Error"
+            
+            db_log = EmailLog(recipient=recipient, subject=subject, status=status)
+            db.add(db_log)
+            
     db.commit()
-    return {"status": "Success", "emails_sent": success_count}
+    return {"message": "Bulk campaign completed!"}
 
 @app.get("/api/logs")
 def get_logs(db = Depends(get_db)):
-    return db.query(EmailLog).order_by(EmailLog.timestamp.desc()).limit(50).all()
+    return db.query(EmailLog).order_by(EmailLog.timestamp.desc()).all()
 
-
-# --- 4. AI CONFIGURATION (GROQ) ---
-import re # NEW: Required to strip out AI thinking tags
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
-class AIRequest(BaseModel):
-    text_content: str
+# --- 5. AI INTEGRATION ---
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 @app.post("/api/ai/draft")
-def draft_reply(req: AIRequest):
-    try:
-        # FIX 1: Moved system instructions into the user prompt
-        prompt = f"You are an expert copywriter. Write a concise, effective email draft formatted purely in HTML (use <br>, <b>, etc). Do NOT wrap your response in markdown code blocks or ```html.\n\nHere is the context to write about:\n{req.text_content}"
-        
-        chat_completion = groq_client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="openai/gpt-oss-20b",
-            temperature=0.6,
-            max_tokens=1000 # FIX 2: Increased so it has room to process logic
-        )
-        
-        raw_draft = chat_completion.choices[0].message.content.strip()
-        
-        # FIX 3: Physically strip out the model's <think> tags if they leak into the text
-        draft = re.sub(r'<think>.*?</think>', '', raw_draft, flags=re.DOTALL).strip()
-        draft = draft.replace("```html", "").replace("```", "").strip()
-        
-        return {"draft": draft}
-    except Exception as e:
-        print(f"GROQ DRAFT ERROR: {e}")
-        return {"draft": "Cloud API error. Check the Python terminal."}
+def generate_draft(req: AIDraftRequest):
+    completion = client.chat.completions.create(
+        model="llama3-8b-8192",
+        messages=[
+            {"role": "system", "content": "You are a professional email writer. Format the output in HTML (e.g. use <p>, <br>)."},
+            {"role": "user", "content": req.text_content}
+        ],
+        temperature=0.7,
+        max_tokens=1024,
+    )
+    return {"draft": completion.choices[0].message.content}
 
 @app.post("/api/ai/subject")
-def generate_subject(req: AIRequest):
-    try:
-        # FIX 1: Moved system instructions into the user prompt
-        prompt = f"You are a professional email copywriter. Your ONLY job is to write ONE short subject line (max 8 words) for the provided email body. Output the subject line ONLY. Do not use quotes, do not say 'Here is', and do not use the word 'Subject:'.\n\nEmail body:\n{req.text_content}"
-        
-        chat_completion = groq_client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="openai/gpt-oss-20b", 
-            temperature=0.5, 
-            max_tokens=300 # FIX 2: Increased so it doesn't get cut off mid-thought
-        )
-        
-        raw_subject = chat_completion.choices[0].message.content.strip()
-        
-        # FIX 3: Strip out the reasoning process and clean up any loose punctuation
-        clean_subject = re.sub(r'<think>.*?</think>', '', raw_subject, flags=re.DOTALL).strip()
-        clean_subject = clean_subject.replace('"', '').replace('Subject:', '').replace('subject:', '').replace('*', '').strip()
-        
-        if not clean_subject:
-            clean_subject = "Important Update"
-            
-        return {"subject": clean_subject}
-    except Exception as e:
-        print(f"GROQ SUBJECT ERROR: {e}")
-        return {"subject": "Error generating subject"}
+def generate_subject(req: AIDraftRequest):
+    completion = client.chat.completions.create(
+        model="llama3-8b-8192",
+        messages=[
+            {"role": "system", "content": "You are an expert copywriter. Generate ONE catchy, professional email subject line for the provided text. DO NOT put quotes around it. DO NOT say 'Here is the subject line'."},
+            {"role": "user", "content": req.text_content}
+        ],
+        temperature=0.7,
+        max_tokens=50,
+    )
+    return {"subject": completion.choices[0].message.content.strip('"')}
