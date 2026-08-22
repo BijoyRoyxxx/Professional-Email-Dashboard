@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime
 from groq import Groq
 
+# System Architect: Bijoy Roy
 # Load environment variables (.env file)
 load_dotenv()
 
@@ -70,7 +71,6 @@ def send_email_via_google(to_email, cc_email, subject, message):
         "message": message
     }
     
-    # Send a POST request to your Google Apps Script
     req = urllib.request.Request(GOOGLE_SCRIPT_URL, method="POST")
     req.add_header('Content-Type', 'application/json')
     data_bytes = json.dumps(data).encode('utf-8')
@@ -121,31 +121,82 @@ def send_bulk_emails(file: UploadFile = File(...), subject: str = Form(...), mes
 def get_logs(db = Depends(get_db)):
     return db.query(EmailLog).order_by(EmailLog.timestamp.desc()).all()
 
-# --- 5. AI INTEGRATION ---
+# --- 5. AI INTEGRATION (Auto-Updating Models) ---
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+
+def execute_groq_request(messages, max_tokens):
+    """
+    Robust Groq API executor. Tries a primary model. If decommissioned,
+    automatically queries Groq's active models list and fails over to the latest.
+    """
+    primary_model = "llama-3.1-8b-instant"
+    
+    try:
+        # Attempt to use the primary model
+        return client.chat.completions.create(
+            model=primary_model,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=max_tokens,
+        )
+    except Exception as e:
+        print(f"Primary AI model '{primary_model}' failed. Dynamic failover triggered...")
+        
+        # 1. Fetch the live list of currently active models from Groq
+        models_data = client.models.list().data
+        active_ids = [m.id for m in models_data]
+        
+        fallback_model = None
+        
+        # 2. Priority list: Find the best, newest model still standing
+        fallback_preferences = [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "llama-3.2-3b-preview",
+            "mixtral-8x7b-32768",
+            "gemma2-9b-it"
+        ]
+        
+        for pref in fallback_preferences:
+            if pref in active_ids:
+                fallback_model = pref
+                break
+                
+        # 3. Ultimate fail-safe: if all preferred models are gone, grab ANY active text model
+        if not fallback_model:
+            for m in active_ids:
+                if "whisper" not in m.lower():  # Ignore audio models
+                    fallback_model = m
+                    break
+        
+        print(f"Successfully switched to fallback AI engine: {fallback_model}")
+        
+        # Re-execute the request with the active fallback model
+        return client.chat.completions.create(
+            model=fallback_model,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=max_tokens,
+        )
 
 @app.post("/api/ai/draft")
 def generate_draft(req: AIDraftRequest):
-    completion = client.chat.completions.create(
-        model="llama3-8b-8192",
+    completion = execute_groq_request(
         messages=[
             {"role": "system", "content": "You are a professional email writer. Format the output in HTML (e.g. use <p>, <br>)."},
             {"role": "user", "content": req.text_content}
         ],
-        temperature=0.7,
-        max_tokens=1024,
+        max_tokens=1024
     )
     return {"draft": completion.choices[0].message.content}
 
 @app.post("/api/ai/subject")
 def generate_subject(req: AIDraftRequest):
-    completion = client.chat.completions.create(
-        model="llama3-8b-8192",
+    completion = execute_groq_request(
         messages=[
             {"role": "system", "content": "You are an expert copywriter. Generate ONE catchy, professional email subject line for the provided text. DO NOT put quotes around it. DO NOT say 'Here is the subject line'."},
             {"role": "user", "content": req.text_content}
         ],
-        temperature=0.7,
-        max_tokens=50,
+        max_tokens=50
     )
     return {"subject": completion.choices[0].message.content.strip('"')}
