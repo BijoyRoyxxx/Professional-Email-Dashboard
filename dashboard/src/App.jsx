@@ -87,6 +87,11 @@ export default function App() {
     setIsLoggingIn(false);
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem('isAuth');
+    setIsAuthenticated(false);
+  };
+
   const fetchLogs = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/logs`);
@@ -426,9 +431,19 @@ export default function App() {
         </div>
       </div>
 
-      {/* WATERMARK */}
+      {/* WATERMARK & LOGOUT */}
       <div className="watermark">
         System Architect: <span>Bijoy Roy</span>
+        <div style={{ marginTop: '16px' }}>
+          <button 
+            onClick={handleLogout} 
+            style={{ background: 'transparent', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444', padding: '8px 16px', borderRadius: '20px', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1.5px', fontWeight: '700', transition: 'all 0.2s' }} 
+            onMouseEnter={e => e.target.style.background = 'rgba(239, 68, 68, 0.1)'} 
+            onMouseLeave={e => e.target.style.background = 'transparent'}
+          >
+            🔒 System Logout
+          </button>
+        </div>
       </div>
     </div>
   );
