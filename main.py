@@ -205,9 +205,12 @@ def generate_draft(req: AIDraftRequest):
 def generate_subject(req: AIDraftRequest):
     completion = execute_groq_request(
         messages=[
-            {"role": "system", "content": "You are an expert copywriter. Generate ONE catchy, professional email subject line for the provided text. DO NOT put quotes around it. DO NOT say 'Here is the subject line'."},
-            {"role": "user", "content": req.text_content}
+            {"role": "system", "content": "You are a strict automated API. Return EXACTLY ONE short email subject line (maximum 8 words). Return NOTHING else. No explanations, no greetings, no HTML tags, and absolutely no quotation marks."},
+            {"role": "user", "content": f"Generate a subject line for this text: {req.text_content}"}
         ],
-        max_tokens=50
+        max_tokens=25 
     )
-    return {"subject": completion.choices[0].message.content.strip('"')}
+    
+    clean_subject = completion.choices[0].message.content.replace('"', '').replace('\n', '').strip()
+    
+    return {"subject": clean_subject}
