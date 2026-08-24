@@ -29,13 +29,23 @@ app.add_middleware(
 )
 
 # --- 1. DATABASE & SECURITY SETUP ---
-SQLALCHEMY_DATABASE_URL = "sqlite:///./campaigns.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+# Pull the secure URL from Render's environment variables. Fallback to local SQLite if not found.
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./campaigns.db")
+
+# Supabase sometimes gives 'postgres://', but SQLAlchemy requires 'postgresql://'
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# SQLite needs special arguments, Postgres does not
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DATABASE_URL)
+    
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 class EmailLog(Base):
     __tablename__ = "email_logs"
     id = Column(Integer, primary_key=True, index=True)
