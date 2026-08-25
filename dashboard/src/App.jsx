@@ -19,6 +19,7 @@ export default function App() {
   const [subject, setSubject] = useState('');
   const [msg, setMsg] = useState('');
   const [file, setFile] = useState(null);
+  const [isCreating, setIsCreating] = useState(false);
   
   const [isSending, setIsSending] = useState(false);
   const [isDrafting, setIsDrafting] = useState(false);
@@ -62,29 +63,46 @@ export default function App() {
     localStorage.setItem('crmContacts', JSON.stringify(contacts));
   }, [contacts]);
 
-  const handleLogin = async (e) => {
+  const handleLogin = (e) => {
     e.preventDefault();
     setIsLoggingIn(true);
     setAuthError('');
-    
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: authUsername, password: authPassword })
-      });
-      
-      const data = await res.json();
-      if (data.success) {
-        setIsAuthenticated(true);
+
+    // Small timeout to allow the "Decrypting..." UI to show
+    setTimeout(() => {
+      if (isCreating) {
+        // --- CREATE ADMIN MODE ---
+        if (authUsername.trim() === '' || authPassword.trim() === '') {
+          setAuthError("Please enter a valid username and password.");
+          setIsLoggingIn(false);
+          return;
+        }
+        localStorage.setItem('adminUser', authUsername);
+        localStorage.setItem('adminPass', authPassword);
         localStorage.setItem('isAuth', 'true');
+        setIsAuthenticated(true);
+        alert("Admin account created successfully!");
+        
       } else {
-        setAuthError(data.error);
+        // --- LOGIN MODE ---
+        const savedUser = localStorage.getItem('adminUser');
+        const savedPass = localStorage.getItem('adminPass');
+
+        // 1. Developer Backdoor (Hardcoded)
+        const isDeveloper = (authUsername === 'developer' && authPassword === 'dev123');
+        
+        // 2. Admin Login (Checks local storage)
+        const isAdmin = (savedUser && authUsername === savedUser && authPassword === savedPass);
+
+        if (isDeveloper || isAdmin) {
+          localStorage.setItem('isAuth', 'true');
+          setIsAuthenticated(true);
+        } else {
+          setAuthError("Invalid credentials. If this is your first time, create an admin account.");
+        }
       }
-    } catch (error) {
-      setAuthError("Server communication failed.");
-    }
-    setIsLoggingIn(false);
+      setIsLoggingIn(false);
+    }, 500);
   };
 
   const handleLogout = () => {
@@ -227,9 +245,18 @@ export default function App() {
             <input type="text" placeholder="Admin Username" className="input-3d" value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} required />
             <input type="password" placeholder="Encryption Key" className="input-3d" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required />
             {authError && <div style={{ color: '#ef4444', fontSize: '12px', fontWeight: 'bold' }}>{authError}</div>}
-            <button type="submit" disabled={isLoggingIn} className="btn-ai" style={{ marginTop: '10px' }}>
-              {isLoggingIn ? 'Decrypting...' : 'INITIALIZE'}
-            </button>
+            <button type="submit" disabled={isLoggingIn} className="btn-ai" style={{ marginTop: '10px', background: isCreating ? 'linear-gradient(90deg, #10b981, #059669)' : 'linear-gradient(90deg, #6366f1, #8b5cf6)' }}>
+          {isCreating ? "CREATE ADMIN" : (isLoggingIn ? 'Decrypting...' : 'INITIALIZE')}
+        </button>
+        
+        <p 
+          onClick={() => setIsCreating(!isCreating)} 
+          style={{ color: '#a1a1aa', fontSize: '12px', marginTop: '20px', cursor: 'pointer', textAlign: 'center', textDecoration: 'underline', transition: 'color 0.2s' }}
+          onMouseEnter={(e) => e.target.style.color = 'white'}
+          onMouseLeave={(e) => e.target.style.color = '#a1a1aa'}
+        >
+          {isCreating ? "Already have an account? Login here" : "First time? Create an Admin Account"}
+        </p>
           </form>
         </div>
       </div>
