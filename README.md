@@ -1,4 +1,11 @@
 <div align="center">
+  <br />
+  <a href="https://professional-email-dashboard.vercel.app/" target="_blank">
+    <img src="https://img.shields.io/badge/🚀_CLICK_HERE_TO_OPEN_APP-2EA043?style=for-the-badge&logo=vercel&logoColor=white&labelColor=1a1a1a" alt="Open Live Dashboard" height="50" />
+  </a>
+  <br />
+</div>
+<div align="center">
 
 # ✉️ Professional Email Dashboard
 **An AI-Powered CRM & Automated Outreach Architecture**
